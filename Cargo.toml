@@ -1,0 +1,8 @@
+[package]
+name = "tiny-talk"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny Smalltalk-like language interpreter"
+license = "MIT"
+
+[dependencies]
