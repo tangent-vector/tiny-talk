@@ -68,7 +68,7 @@
 //! content—file IDs can be registered before content is loaded, with the actual text
 //! fetched on demand.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ============================================================================
 // Source Identifiers
@@ -264,7 +264,7 @@ impl SourceFile {
         };
         let line_start = self.line_starts[line_index];
         LineCol {
-            line: (line_index + 1) as u32, // 1-based
+            line: (line_index + 1) as u32,     // 1-based
             column: (offset - line_start) + 1, // 1-based
         }
     }
@@ -489,11 +489,11 @@ mod tests {
     fn test_line_col_single_line() {
         let mut manager = SourceManager::new();
         let id = manager.add_file("test.tt", "hello world");
-        
+
         // Start of file
         let pos = manager.line_col(id, 0);
         assert_eq!(pos, LineCol { line: 1, column: 1 });
-        
+
         // Middle of line
         let pos = manager.line_col(id, 6);
         assert_eq!(pos, LineCol { line: 1, column: 7 });
@@ -505,19 +505,19 @@ mod tests {
         // "line1\nline2\nline3"
         // Offsets: l=0, i=1, n=2, e=3, 1=4, \n=5, l=6, i=7, n=8, e=9, 2=10, \n=11, l=12, ...
         let id = manager.add_file("test.tt", "line1\nline2\nline3");
-        
+
         // Start of line 1
         let pos = manager.line_col(id, 0);
         assert_eq!(pos, LineCol { line: 1, column: 1 });
-        
+
         // End of line 1 (the newline character)
         let pos = manager.line_col(id, 5);
         assert_eq!(pos, LineCol { line: 1, column: 6 });
-        
+
         // Start of line 2
         let pos = manager.line_col(id, 6);
         assert_eq!(pos, LineCol { line: 2, column: 1 });
-        
+
         // Start of line 3
         let pos = manager.line_col(id, 12);
         assert_eq!(pos, LineCol { line: 3, column: 1 });
@@ -527,7 +527,7 @@ mod tests {
     fn test_line_text() {
         let mut manager = SourceManager::new();
         let id = manager.add_file("test.tt", "line1\nline2\nline3");
-        
+
         assert_eq!(manager.line_text(id, 1), Some("line1"));
         assert_eq!(manager.line_text(id, 2), Some("line2"));
         assert_eq!(manager.line_text(id, 3), Some("line3"));
@@ -538,13 +538,13 @@ mod tests {
     #[test]
     fn test_line_count() {
         let mut manager = SourceManager::new();
-        
+
         let id1 = manager.add_file("single.tt", "hello");
         assert_eq!(manager.line_count(id1), 1);
-        
+
         let id2 = manager.add_file("multi.tt", "a\nb\nc");
         assert_eq!(manager.line_count(id2), 3);
-        
+
         let id3 = manager.add_file("trailing.tt", "a\nb\n");
         assert_eq!(manager.line_count(id3), 3); // Empty line after trailing newline
     }
@@ -563,10 +563,10 @@ mod tests {
         let id = manager.add_file("test.tt", "line1\nline2\nline3");
         // Span covering "line2" (bytes 6-11)
         let span = Span::new(id, 6, 5);
-        
+
         let start = manager.span_start_line_col(span);
         assert_eq!(start, LineCol { line: 2, column: 1 });
-        
+
         let end = manager.span_end_line_col(span);
         assert_eq!(end, LineCol { line: 2, column: 6 });
     }

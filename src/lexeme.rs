@@ -396,7 +396,7 @@ mod tests {
         assert!(TokenKind::Keyword("at:".into()).is_keyword());
         assert!(TokenKind::BinarySelector("+".into()).is_binary_selector());
         assert!(TokenKind::Integer(42).is_literal());
-        assert!(TokenKind::Float(3.14).is_literal());
+        assert!(TokenKind::Float(1.5).is_literal());
         assert!(TokenKind::String("hello".into()).is_literal());
         assert!(TokenKind::Symbol("sym".into()).is_literal());
         assert!(TokenKind::Character('a').is_literal());
@@ -417,7 +417,10 @@ mod tests {
 
     #[test]
     fn test_token_kind_description() {
-        assert_eq!(TokenKind::Identifier("x".into()).description(), "identifier");
+        assert_eq!(
+            TokenKind::Identifier("x".into()).description(),
+            "identifier"
+        );
         assert_eq!(TokenKind::LeftParen.description(), "'('");
         assert_eq!(TokenKind::Assign.description(), "':='");
         assert_eq!(TokenKind::Eof.description(), "end of file");
@@ -438,4 +441,3 @@ mod tests {
         assert_eq!(token.kind, TokenKind::Eof);
     }
 }
-
