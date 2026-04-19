@@ -68,7 +68,7 @@
 //! content—file IDs can be registered before content is loaded, with the actual text
 //! fetched on demand.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ============================================================================
 // Source Identifiers
@@ -198,7 +198,13 @@ impl Span {
     ///
     /// Panics if the spans are from different source files.
     pub fn merge(&self, other: &Span) -> Span {
-        todo!("Span::merge")
+        assert_eq!(
+            self.source, other.source,
+            "cannot merge spans from different source files"
+        );
+        let start = self.start.min(other.start);
+        let end = self.end().max(other.end());
+        Span::new(self.source, start, end - start)
     }
 }
 
@@ -224,22 +230,59 @@ struct SourceFile {
 impl SourceFile {
     /// Creates a new source file with the given name and content.
     fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
-        todo!("SourceFile::new")
+        let name = name.into();
+        let content = content.into();
+        
+        // Build line index: collect byte offsets where each line starts.
+        // Line 0 always starts at offset 0.
+        let mut line_starts = vec![0u32];
+        for (i, byte) in content.bytes().enumerate() {
+            if byte == b'\n' {
+                // The next line starts after this newline character
+                line_starts.push((i + 1) as u32);
+            }
+        }
+        
+        Self {
+            name,
+            content,
+            line_starts,
+        }
     }
 
     /// Computes the line/column position for a byte offset.
     fn line_col(&self, offset: u32) -> LineCol {
-        todo!("SourceFile::line_col")
+        // Binary search to find the line containing this offset.
+        // partition_point returns the index where offset would be inserted
+        // to maintain sorted order, i.e., the number of line starts <= offset.
+        let line_index = self.line_starts.partition_point(|&start| start <= offset);
+        // Adjust: partition_point gives us 1-based position in the array for our purpose,
+        // but we need 0-based line index, and the line start we want is the one before.
+        let line_index = line_index.saturating_sub(1);
+        let line_start = self.line_starts[line_index];
+        
+        LineCol {
+            line: (line_index + 1) as u32,  // 1-based line number
+            column: (offset - line_start) + 1,  // 1-based column
+        }
     }
 
     /// Returns the byte offset where a given line starts (0-based line index).
     fn line_start(&self, line_index: usize) -> Option<u32> {
-        todo!("SourceFile::line_start")
+        self.line_starts.get(line_index).copied()
     }
 
     /// Returns the text content of a given line (0-based line index).
     fn line_text(&self, line_index: usize) -> Option<&str> {
-        todo!("SourceFile::line_text")
+        let start = self.line_start(line_index)? as usize;
+        let end = self
+            .line_start(line_index + 1)
+            .map(|e| e as usize)
+            .unwrap_or(self.content.len());
+        
+        // Trim trailing newline if present
+        let line = &self.content[start..end];
+        Some(line.strip_suffix('\n').unwrap_or(line))
     }
 }
 
@@ -282,7 +325,9 @@ impl SourceManager {
     ///
     /// Returns a [`SourceId`] that can be used to refer to this file.
     pub fn add_file(&mut self, name: impl Into<String>, content: impl Into<String>) -> SourceId {
-        todo!("SourceManager::add_file")
+        let id = SourceId(self.files.len() as u32);
+        self.files.push(SourceFile::new(name, content));
+        id
     }
 
     /// Adds a source file by reading from a filesystem path.
@@ -293,7 +338,10 @@ impl SourceManager {
     ///
     /// Returns an error if the file cannot be read.
     pub fn add_file_from_path(&mut self, path: impl AsRef<Path>) -> std::io::Result<SourceId> {
-        todo!("SourceManager::add_file_from_path")
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)?;
+        let name = path.display().to_string();
+        Ok(self.add_file(name, content))
     }
 
     /// Returns the name/path of a source file.
@@ -302,7 +350,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid.
     pub fn name(&self, id: SourceId) -> &str {
-        todo!("SourceManager::name")
+        &self.files[id.0 as usize].name
     }
 
     /// Returns the full content of a source file.
@@ -311,7 +359,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid.
     pub fn content(&self, id: SourceId) -> &str {
-        todo!("SourceManager::content")
+        &self.files[id.0 as usize].content
     }
 
     /// Computes the line/column position for a byte offset in a file.
@@ -320,7 +368,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid or the offset is out of bounds.
     pub fn line_col(&self, id: SourceId, offset: u32) -> LineCol {
-        todo!("SourceManager::line_col")
+        self.files[id.0 as usize].line_col(offset)
     }
 
     /// Returns the line/column for the start of a span.
@@ -337,7 +385,9 @@ impl SourceManager {
     ///
     /// Returns `None` if the line number is out of bounds.
     pub fn line_text(&self, id: SourceId, line: u32) -> Option<&str> {
-        todo!("SourceManager::line_text")
+        // Convert 1-based line number to 0-based index
+        let line_index = line.checked_sub(1)? as usize;
+        self.files[id.0 as usize].line_text(line_index)
     }
 
     /// Extracts the source text covered by a span.
@@ -346,12 +396,13 @@ impl SourceManager {
     ///
     /// Panics if the span's source ID is invalid or the span is out of bounds.
     pub fn span_text(&self, span: Span) -> &str {
-        todo!("SourceManager::span_text")
+        let file = &self.files[span.source().0 as usize];
+        &file.content[span.start() as usize..span.end() as usize]
     }
 
     /// Returns the number of lines in a source file.
     pub fn line_count(&self, id: SourceId) -> usize {
-        todo!("SourceManager::line_count")
+        self.files[id.0 as usize].line_starts.len()
     }
 }
 
@@ -391,5 +442,111 @@ mod tests {
         assert!(span.is_empty());
     }
 
-    // Additional tests will be added during implementation
+    #[test]
+    fn test_span_merge() {
+        let span1 = Span::new(SourceId(0), 5, 10);  // bytes 5-15
+        let span2 = Span::new(SourceId(0), 10, 10); // bytes 10-20
+        let merged = span1.merge(&span2);
+        assert_eq!(merged.start(), 5);
+        assert_eq!(merged.end(), 20);
+        assert_eq!(merged.len(), 15);
+    }
+
+    #[test]
+    fn test_span_merge_disjoint() {
+        let span1 = Span::new(SourceId(0), 0, 5);   // bytes 0-5
+        let span2 = Span::new(SourceId(0), 20, 5); // bytes 20-25
+        let merged = span1.merge(&span2);
+        assert_eq!(merged.start(), 0);
+        assert_eq!(merged.end(), 25);
+    }
+
+    #[test]
+    fn test_source_manager_add_file() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        assert_eq!(manager.name(id), "test.tt");
+        assert_eq!(manager.content(id), "hello world");
+    }
+
+    #[test]
+    fn test_line_col_single_line() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        
+        // Start of file
+        let pos = manager.line_col(id, 0);
+        assert_eq!(pos, LineCol { line: 1, column: 1 });
+        
+        // Middle of line
+        let pos = manager.line_col(id, 6);
+        assert_eq!(pos, LineCol { line: 1, column: 7 });
+    }
+
+    #[test]
+    fn test_line_col_multi_line() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "line one\nline two\nline three");
+        
+        // First line
+        assert_eq!(manager.line_col(id, 0), LineCol { line: 1, column: 1 });
+        assert_eq!(manager.line_col(id, 4), LineCol { line: 1, column: 5 });
+        
+        // Second line (starts at offset 9, after "line one\n")
+        assert_eq!(manager.line_col(id, 9), LineCol { line: 2, column: 1 });
+        assert_eq!(manager.line_col(id, 13), LineCol { line: 2, column: 5 });
+        
+        // Third line (starts at offset 18, after "line two\n")
+        assert_eq!(manager.line_col(id, 18), LineCol { line: 3, column: 1 });
+    }
+
+    #[test]
+    fn test_line_text() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "first\nsecond\nthird");
+        
+        assert_eq!(manager.line_text(id, 1), Some("first"));
+        assert_eq!(manager.line_text(id, 2), Some("second"));
+        assert_eq!(manager.line_text(id, 3), Some("third"));
+        assert_eq!(manager.line_text(id, 0), None);  // 0 is invalid (1-based)
+        assert_eq!(manager.line_text(id, 4), None);  // out of bounds
+    }
+
+    #[test]
+    fn test_line_count() {
+        let mut manager = SourceManager::new();
+        
+        let id1 = manager.add_file("one.tt", "single line");
+        assert_eq!(manager.line_count(id1), 1);
+        
+        let id2 = manager.add_file("two.tt", "line one\nline two");
+        assert_eq!(manager.line_count(id2), 2);
+        
+        let id3 = manager.add_file("three.tt", "a\nb\nc\n");
+        assert_eq!(manager.line_count(id3), 4);  // trailing newline creates empty 4th line
+    }
+
+    #[test]
+    fn test_span_text() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        
+        let span = Span::new(id, 0, 5);
+        assert_eq!(manager.span_text(span), "hello");
+        
+        let span = Span::new(id, 6, 5);
+        assert_eq!(manager.span_text(span), "world");
+    }
+
+    #[test]
+    fn test_multiple_files() {
+        let mut manager = SourceManager::new();
+        let id1 = manager.add_file("file1.tt", "content one");
+        let id2 = manager.add_file("file2.tt", "content two");
+        
+        assert_eq!(manager.name(id1), "file1.tt");
+        assert_eq!(manager.name(id2), "file2.tt");
+        assert_eq!(manager.content(id1), "content one");
+        assert_eq!(manager.content(id2), "content two");
+    }
 }
