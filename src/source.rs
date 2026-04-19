@@ -198,7 +198,17 @@ impl Span {
     ///
     /// Panics if the spans are from different source files.
     pub fn merge(&self, other: &Span) -> Span {
-        todo!("Span::merge")
+        assert_eq!(
+            self.source, other.source,
+            "cannot merge spans from different source files"
+        );
+        let start = self.start.min(other.start);
+        let end = self.end().max(other.end());
+        Span {
+            source: self.source,
+            start,
+            len: end - start,
+        }
     }
 }
 
@@ -224,22 +234,58 @@ struct SourceFile {
 impl SourceFile {
     /// Creates a new source file with the given name and content.
     fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
-        todo!("SourceFile::new")
+        let content = content.into();
+        let line_starts = Self::compute_line_starts(&content);
+        Self {
+            name: name.into(),
+            content,
+            line_starts,
+        }
+    }
+
+    /// Computes the byte offsets where each line begins.
+    fn compute_line_starts(content: &str) -> Vec<u32> {
+        let mut starts = vec![0]; // Line 1 always starts at offset 0
+        for (i, c) in content.char_indices() {
+            if c == '\n' {
+                // Next line starts after the newline
+                starts.push((i + 1) as u32);
+            }
+        }
+        starts
     }
 
     /// Computes the line/column position for a byte offset.
     fn line_col(&self, offset: u32) -> LineCol {
-        todo!("SourceFile::line_col")
+        // Binary search for the line containing this offset
+        let line_index = match self.line_starts.binary_search(&offset) {
+            Ok(exact) => exact,        // Offset is exactly at a line start
+            Err(insert) => insert - 1, // Offset is within line (insert - 1)
+        };
+        let line_start = self.line_starts[line_index];
+        LineCol {
+            line: (line_index + 1) as u32, // 1-based
+            column: (offset - line_start) + 1, // 1-based
+        }
     }
 
     /// Returns the byte offset where a given line starts (0-based line index).
+    #[allow(dead_code)] // May be useful for future extensions
     fn line_start(&self, line_index: usize) -> Option<u32> {
-        todo!("SourceFile::line_start")
+        self.line_starts.get(line_index).copied()
     }
 
     /// Returns the text content of a given line (0-based line index).
     fn line_text(&self, line_index: usize) -> Option<&str> {
-        todo!("SourceFile::line_text")
+        let start = *self.line_starts.get(line_index)? as usize;
+        let end = self
+            .line_starts
+            .get(line_index + 1)
+            .map(|&offset| offset as usize)
+            .unwrap_or(self.content.len());
+        // Strip trailing newline if present
+        let line = &self.content[start..end];
+        Some(line.strip_suffix('\n').unwrap_or(line))
     }
 }
 
@@ -282,7 +328,9 @@ impl SourceManager {
     ///
     /// Returns a [`SourceId`] that can be used to refer to this file.
     pub fn add_file(&mut self, name: impl Into<String>, content: impl Into<String>) -> SourceId {
-        todo!("SourceManager::add_file")
+        let id = SourceId(self.files.len() as u32);
+        self.files.push(SourceFile::new(name, content));
+        id
     }
 
     /// Adds a source file by reading from a filesystem path.
@@ -293,7 +341,10 @@ impl SourceManager {
     ///
     /// Returns an error if the file cannot be read.
     pub fn add_file_from_path(&mut self, path: impl AsRef<Path>) -> std::io::Result<SourceId> {
-        todo!("SourceManager::add_file_from_path")
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)?;
+        let name = path.display().to_string();
+        Ok(self.add_file(name, content))
     }
 
     /// Returns the name/path of a source file.
@@ -302,7 +353,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid.
     pub fn name(&self, id: SourceId) -> &str {
-        todo!("SourceManager::name")
+        &self.files[id.0 as usize].name
     }
 
     /// Returns the full content of a source file.
@@ -311,7 +362,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid.
     pub fn content(&self, id: SourceId) -> &str {
-        todo!("SourceManager::content")
+        &self.files[id.0 as usize].content
     }
 
     /// Computes the line/column position for a byte offset in a file.
@@ -320,7 +371,7 @@ impl SourceManager {
     ///
     /// Panics if the source ID is invalid or the offset is out of bounds.
     pub fn line_col(&self, id: SourceId, offset: u32) -> LineCol {
-        todo!("SourceManager::line_col")
+        self.files[id.0 as usize].line_col(offset)
     }
 
     /// Returns the line/column for the start of a span.
@@ -337,7 +388,9 @@ impl SourceManager {
     ///
     /// Returns `None` if the line number is out of bounds.
     pub fn line_text(&self, id: SourceId, line: u32) -> Option<&str> {
-        todo!("SourceManager::line_text")
+        // Convert from 1-based to 0-based line index
+        let line_index = line.checked_sub(1)? as usize;
+        self.files[id.0 as usize].line_text(line_index)
     }
 
     /// Extracts the source text covered by a span.
@@ -346,12 +399,13 @@ impl SourceManager {
     ///
     /// Panics if the span's source ID is invalid or the span is out of bounds.
     pub fn span_text(&self, span: Span) -> &str {
-        todo!("SourceManager::span_text")
+        let content = self.content(span.source());
+        &content[span.start() as usize..span.end() as usize]
     }
 
     /// Returns the number of lines in a source file.
     pub fn line_count(&self, id: SourceId) -> usize {
-        todo!("SourceManager::line_count")
+        self.files[id.0 as usize].line_starts.len()
     }
 }
 
@@ -391,5 +445,138 @@ mod tests {
         assert!(span.is_empty());
     }
 
-    // Additional tests will be added during implementation
+    #[test]
+    fn test_span_merge() {
+        let source = SourceId(0);
+        let span1 = Span::new(source, 5, 10); // bytes 5-15
+        let span2 = Span::new(source, 20, 5); // bytes 20-25
+        let merged = span1.merge(&span2);
+        assert_eq!(merged.start(), 5);
+        assert_eq!(merged.end(), 25);
+        assert_eq!(merged.len(), 20);
+    }
+
+    #[test]
+    fn test_span_merge_overlapping() {
+        let source = SourceId(0);
+        let span1 = Span::new(source, 5, 10); // bytes 5-15
+        let span2 = Span::new(source, 10, 10); // bytes 10-20
+        let merged = span1.merge(&span2);
+        assert_eq!(merged.start(), 5);
+        assert_eq!(merged.end(), 20);
+    }
+
+    #[test]
+    fn test_source_manager_add_file() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        assert_eq!(manager.name(id), "test.tt");
+        assert_eq!(manager.content(id), "hello world");
+    }
+
+    #[test]
+    fn test_source_manager_multiple_files() {
+        let mut manager = SourceManager::new();
+        let id1 = manager.add_file("file1.tt", "content1");
+        let id2 = manager.add_file("file2.tt", "content2");
+        assert_eq!(manager.name(id1), "file1.tt");
+        assert_eq!(manager.name(id2), "file2.tt");
+        assert_eq!(manager.content(id1), "content1");
+        assert_eq!(manager.content(id2), "content2");
+    }
+
+    #[test]
+    fn test_line_col_single_line() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        
+        // Start of file
+        let pos = manager.line_col(id, 0);
+        assert_eq!(pos, LineCol { line: 1, column: 1 });
+        
+        // Middle of line
+        let pos = manager.line_col(id, 6);
+        assert_eq!(pos, LineCol { line: 1, column: 7 });
+    }
+
+    #[test]
+    fn test_line_col_multi_line() {
+        let mut manager = SourceManager::new();
+        // "line1\nline2\nline3"
+        // Offsets: l=0, i=1, n=2, e=3, 1=4, \n=5, l=6, i=7, n=8, e=9, 2=10, \n=11, l=12, ...
+        let id = manager.add_file("test.tt", "line1\nline2\nline3");
+        
+        // Start of line 1
+        let pos = manager.line_col(id, 0);
+        assert_eq!(pos, LineCol { line: 1, column: 1 });
+        
+        // End of line 1 (the newline character)
+        let pos = manager.line_col(id, 5);
+        assert_eq!(pos, LineCol { line: 1, column: 6 });
+        
+        // Start of line 2
+        let pos = manager.line_col(id, 6);
+        assert_eq!(pos, LineCol { line: 2, column: 1 });
+        
+        // Start of line 3
+        let pos = manager.line_col(id, 12);
+        assert_eq!(pos, LineCol { line: 3, column: 1 });
+    }
+
+    #[test]
+    fn test_line_text() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "line1\nline2\nline3");
+        
+        assert_eq!(manager.line_text(id, 1), Some("line1"));
+        assert_eq!(manager.line_text(id, 2), Some("line2"));
+        assert_eq!(manager.line_text(id, 3), Some("line3"));
+        assert_eq!(manager.line_text(id, 0), None); // 0 is invalid (1-based)
+        assert_eq!(manager.line_text(id, 4), None); // Out of bounds
+    }
+
+    #[test]
+    fn test_line_count() {
+        let mut manager = SourceManager::new();
+        
+        let id1 = manager.add_file("single.tt", "hello");
+        assert_eq!(manager.line_count(id1), 1);
+        
+        let id2 = manager.add_file("multi.tt", "a\nb\nc");
+        assert_eq!(manager.line_count(id2), 3);
+        
+        let id3 = manager.add_file("trailing.tt", "a\nb\n");
+        assert_eq!(manager.line_count(id3), 3); // Empty line after trailing newline
+    }
+
+    #[test]
+    fn test_span_text() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "hello world");
+        let span = Span::new(id, 6, 5); // "world"
+        assert_eq!(manager.span_text(span), "world");
+    }
+
+    #[test]
+    fn test_span_line_col() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("test.tt", "line1\nline2\nline3");
+        // Span covering "line2" (bytes 6-11)
+        let span = Span::new(id, 6, 5);
+        
+        let start = manager.span_start_line_col(span);
+        assert_eq!(start, LineCol { line: 2, column: 1 });
+        
+        let end = manager.span_end_line_col(span);
+        assert_eq!(end, LineCol { line: 2, column: 6 });
+    }
+
+    #[test]
+    fn test_empty_file() {
+        let mut manager = SourceManager::new();
+        let id = manager.add_file("empty.tt", "");
+        assert_eq!(manager.content(id), "");
+        assert_eq!(manager.line_count(id), 1); // Even empty files have 1 "line"
+        assert_eq!(manager.line_text(id, 1), Some(""));
+    }
 }
