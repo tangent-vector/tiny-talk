@@ -87,13 +87,15 @@ use std::io::Write;
 ///
 /// Severity determines how the diagnostic is displayed and whether it
 /// prevents further processing.
+///
+/// Ordering: Note < Warning < Error (errors are most severe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
-    /// An error that prevents successful completion.
+    /// Additional context or information.
     ///
-    /// Errors indicate problems that must be fixed before the program can run.
-    /// Examples: syntax errors, undefined variables, type mismatches.
-    Error,
+    /// Notes are attached to other diagnostics to provide more detail.
+    /// They're not standalone issues. Example: "see also: definition here"
+    Note,
 
     /// A warning about potentially problematic code.
     ///
@@ -101,11 +103,11 @@ pub enum Severity {
     /// as intended. Examples: unused variables, deprecated features.
     Warning,
 
-    /// Additional context or information.
+    /// An error that prevents successful completion.
     ///
-    /// Notes are attached to other diagnostics to provide more detail.
-    /// They're not standalone issues. Example: "see also: definition here"
-    Note,
+    /// Errors indicate problems that must be fixed before the program can run.
+    /// Examples: syntax errors, undefined variables, type mismatches.
+    Error,
 }
 
 impl Severity {
@@ -450,9 +452,9 @@ impl DiagnosticRenderer {
         // ANSI color codes
         let (color_start, color_end) = if self.use_colors {
             match diagnostic.severity() {
-                Severity::Error => ("\x1b[1;31m", "\x1b[0m"),   // Bold red
+                Severity::Error => ("\x1b[1;31m", "\x1b[0m"), // Bold red
                 Severity::Warning => ("\x1b[1;33m", "\x1b[0m"), // Bold yellow
-                Severity::Note => ("\x1b[1;36m", "\x1b[0m"),    // Bold cyan
+                Severity::Note => ("\x1b[1;36m", "\x1b[0m"),  // Bold cyan
             }
         } else {
             ("", "")
@@ -533,11 +535,14 @@ impl DiagnosticRenderer {
                 let span_len = span.len() as usize;
 
                 // Clamp span length to not exceed line length
-                let underline_len = span_len.min(line_text.len().saturating_sub(col_offset)).max(1);
+                let underline_len = span_len
+                    .min(line_text.len().saturating_sub(col_offset))
+                    .max(1);
 
                 // Choose underline character based on primary/secondary
                 let underline_char = if label.is_primary() { '^' } else { '-' };
-                let underline: String = std::iter::repeat(underline_char).take(underline_len).collect();
+                let underline: String =
+                    std::iter::repeat_n(underline_char, underline_len).collect();
 
                 // Print underline with message
                 writeln!(
@@ -722,8 +727,7 @@ mod tests {
         // Span on line 2, "line2" starts at offset 6
         let span = Span::new(id, 6, 5);
 
-        let diag = Diagnostic::error("error on line 2")
-            .with_label(Label::primary(span, "here"));
+        let diag = Diagnostic::error("error on line 2").with_label(Label::primary(span, "here"));
 
         let renderer = DiagnosticRenderer::new();
         let mut output = Vec::new();
@@ -741,8 +745,7 @@ mod tests {
         let id = sources.add_file("test.tt", "foo bar baz");
         let span = Span::new(id, 4, 3); // "bar"
 
-        let diag = Diagnostic::note("see also")
-            .with_label(Label::secondary(span, "defined here"));
+        let diag = Diagnostic::note("see also").with_label(Label::secondary(span, "defined here"));
 
         let renderer = DiagnosticRenderer::new();
         let mut output = Vec::new();
@@ -759,8 +762,8 @@ mod tests {
         let sources = SourceManager::new();
         let span = Span::synthetic();
 
-        let diag = Diagnostic::error("internal error")
-            .with_label(Label::primary(span, "generated code"));
+        let diag =
+            Diagnostic::error("internal error").with_label(Label::primary(span, "generated code"));
 
         let renderer = DiagnosticRenderer::new();
         let mut output = Vec::new();
