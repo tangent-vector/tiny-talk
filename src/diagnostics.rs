@@ -447,7 +447,128 @@ impl DiagnosticRenderer {
         sources: &SourceManager,
         writer: &mut dyn Write,
     ) -> std::io::Result<()> {
-        todo!("DiagnosticRenderer::render")
+        // ANSI color codes
+        let (color_start, color_end) = if self.use_colors {
+            match diagnostic.severity() {
+                Severity::Error => ("\x1b[1;31m", "\x1b[0m"),   // Bold red
+                Severity::Warning => ("\x1b[1;33m", "\x1b[0m"), // Bold yellow
+                Severity::Note => ("\x1b[1;36m", "\x1b[0m"),    // Bold cyan
+            }
+        } else {
+            ("", "")
+        };
+        let bold = if self.use_colors { "\x1b[1m" } else { "" };
+        let reset = if self.use_colors { "\x1b[0m" } else { "" };
+
+        // First line: severity and message
+        writeln!(
+            writer,
+            "{}{}{}: {}{}{}",
+            color_start,
+            diagnostic.severity().as_str(),
+            color_end,
+            bold,
+            diagnostic.message(),
+            reset
+        )?;
+
+        // Render each label with source context
+        for label in diagnostic.labels() {
+            let span = label.span();
+
+            // Skip synthetic spans - they have no real source location
+            if span.source() == crate::source::SourceId::SYNTHETIC {
+                // Just show the label message without source context
+                if !label.message().is_empty() {
+                    writeln!(writer, "   = {}", label.message())?;
+                }
+                continue;
+            }
+
+            let loc = sources.span_start_line_col(span);
+            let file_name = sources.name(span.source());
+
+            // Location line: --> file:line:column
+            writeln!(
+                writer,
+                "  {}-->{} {}:{}:{}",
+                if self.use_colors { "\x1b[1;34m" } else { "" },
+                reset,
+                file_name,
+                loc.line,
+                loc.column
+            )?;
+
+            // Get the source line
+            if let Some(line_text) = sources.line_text(span.source(), loc.line) {
+                // Calculate the width needed for line numbers
+                let line_num_width = loc.line.to_string().len();
+
+                // Empty gutter line
+                writeln!(
+                    writer,
+                    "{:width$} {}|{}",
+                    "",
+                    if self.use_colors { "\x1b[1;34m" } else { "" },
+                    reset,
+                    width = line_num_width
+                )?;
+
+                // Source line with line number
+                writeln!(
+                    writer,
+                    "{}{:width$}{} {}|{} {}",
+                    if self.use_colors { "\x1b[1;34m" } else { "" },
+                    loc.line,
+                    reset,
+                    if self.use_colors { "\x1b[1;34m" } else { "" },
+                    reset,
+                    line_text,
+                    width = line_num_width
+                )?;
+
+                // Underline showing the span
+                // Calculate the column offset and span length within this line
+                let col_offset = (loc.column - 1) as usize;
+                let span_len = span.len() as usize;
+
+                // Clamp span length to not exceed line length
+                let underline_len = span_len.min(line_text.len().saturating_sub(col_offset)).max(1);
+
+                // Choose underline character based on primary/secondary
+                let underline_char = if label.is_primary() { '^' } else { '-' };
+                let underline: String = std::iter::repeat(underline_char).take(underline_len).collect();
+
+                // Print underline with message
+                writeln!(
+                    writer,
+                    "{:width$} {}|{} {:col$}{}{}{} {}",
+                    "",
+                    if self.use_colors { "\x1b[1;34m" } else { "" },
+                    reset,
+                    "",
+                    color_start,
+                    underline,
+                    color_end,
+                    label.message(),
+                    width = line_num_width,
+                    col = col_offset
+                )?;
+            }
+        }
+
+        // Help text if present
+        if let Some(help) = diagnostic.help() {
+            writeln!(
+                writer,
+                "   {}= help:{} {}",
+                if self.use_colors { "\x1b[1;32m" } else { "" },
+                reset,
+                help
+            )?;
+        }
+
+        Ok(())
     }
 
     /// Renders all diagnostics from a collector.
@@ -536,5 +657,117 @@ mod tests {
         let secondary = Label::secondary(span, "secondary message");
         assert!(!secondary.is_primary());
         assert_eq!(secondary.message(), "secondary message");
+    }
+
+    #[test]
+    fn test_render_basic() {
+        let mut sources = SourceManager::new();
+        let id = sources.add_file("test.tt", "receiver message: argument");
+        let span = Span::new(id, 9, 7); // "message"
+
+        let diag = Diagnostic::error("unexpected token")
+            .with_label(Label::primary(span, "expected identifier"));
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("error: unexpected token"));
+        assert!(output_str.contains("--> test.tt:1:10"));
+        assert!(output_str.contains("receiver message: argument"));
+        assert!(output_str.contains("^^^^^^^ expected identifier"));
+    }
+
+    #[test]
+    fn test_render_with_help() {
+        let mut sources = SourceManager::new();
+        let id = sources.add_file("test.tt", "x := 42");
+        let span = Span::new(id, 0, 1); // "x"
+
+        let diag = Diagnostic::error("undefined variable")
+            .with_label(Label::primary(span, "not found in this scope"))
+            .with_help("did you mean `count`?");
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("error: undefined variable"));
+        assert!(output_str.contains("= help: did you mean `count`?"));
+    }
+
+    #[test]
+    fn test_render_warning() {
+        let mut sources = SourceManager::new();
+        let id = sources.add_file("test.tt", "unused := 1");
+        let span = Span::new(id, 0, 6); // "unused"
+
+        let diag = Diagnostic::warning("unused variable")
+            .with_label(Label::primary(span, "this variable is never used"));
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("warning: unused variable"));
+    }
+
+    #[test]
+    fn test_render_multiline_source() {
+        let mut sources = SourceManager::new();
+        let id = sources.add_file("test.tt", "line1\nline2\nline3");
+        // Span on line 2, "line2" starts at offset 6
+        let span = Span::new(id, 6, 5);
+
+        let diag = Diagnostic::error("error on line 2")
+            .with_label(Label::primary(span, "here"));
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("--> test.tt:2:1"));
+        assert!(output_str.contains("2 | line2"));
+        assert!(output_str.contains("^^^^^ here"));
+    }
+
+    #[test]
+    fn test_render_secondary_label() {
+        let mut sources = SourceManager::new();
+        let id = sources.add_file("test.tt", "foo bar baz");
+        let span = Span::new(id, 4, 3); // "bar"
+
+        let diag = Diagnostic::note("see also")
+            .with_label(Label::secondary(span, "defined here"));
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("note: see also"));
+        // Secondary labels use dashes instead of carets
+        assert!(output_str.contains("--- defined here"));
+    }
+
+    #[test]
+    fn test_render_synthetic_span() {
+        let sources = SourceManager::new();
+        let span = Span::synthetic();
+
+        let diag = Diagnostic::error("internal error")
+            .with_label(Label::primary(span, "generated code"));
+
+        let renderer = DiagnosticRenderer::new();
+        let mut output = Vec::new();
+        renderer.render(&diag, &sources, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("error: internal error"));
+        assert!(output_str.contains("= generated code"));
     }
 }
