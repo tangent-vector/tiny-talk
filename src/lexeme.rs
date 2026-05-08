@@ -203,6 +203,12 @@ pub enum TokenKind {
     /// The stored value is the character.
     Character(char),
 
+    /// An invalid or otherwise unrecognized token.
+    ///
+    /// The lexer emits this after reporting a diagnostic so later stages can
+    /// keep processing the rest of the token stream.
+    Error(String),
+
     // -------------------------------------------------------------------------
     // Punctuation
     // -------------------------------------------------------------------------
@@ -293,7 +299,8 @@ impl TokenKind {
             | TokenKind::Keyword(s)
             | TokenKind::BinarySelector(s)
             | TokenKind::String(s)
-            | TokenKind::Symbol(s) => Some(s),
+            | TokenKind::Symbol(s)
+            | TokenKind::Error(s) => Some(s),
             _ => None,
         }
     }
@@ -309,6 +316,7 @@ impl TokenKind {
             TokenKind::String(_) => "string",
             TokenKind::Symbol(_) => "symbol",
             TokenKind::Character(_) => "character",
+            TokenKind::Error(_) => "error",
             TokenKind::LeftParen => "'('",
             TokenKind::RightParen => "')'",
             TokenKind::LeftBracket => "'['",
@@ -411,6 +419,7 @@ mod tests {
         assert_eq!(TokenKind::BinarySelector("+".into()).as_str(), Some("+"));
         assert_eq!(TokenKind::String("hello".into()).as_str(), Some("hello"));
         assert_eq!(TokenKind::Symbol("sym".into()).as_str(), Some("sym"));
+        assert_eq!(TokenKind::Error("bad".into()).as_str(), Some("bad"));
         assert_eq!(TokenKind::Integer(42).as_str(), None);
         assert_eq!(TokenKind::LeftParen.as_str(), None);
     }
