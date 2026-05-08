@@ -779,4 +779,3 @@ mod tests {
         assert_eq!(class.methods[0].body.len(), 1);
     }
 }
-
