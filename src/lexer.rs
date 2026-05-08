@@ -489,13 +489,13 @@ mod tests {
 
     #[test]
     fn lexes_literals() {
-        let (tokens, diagnostics) = kinds("42 3.14 1e3 16rFF 'it''s' #name #'two words' #+ $x");
+        let (tokens, diagnostics) = kinds("42 2.5 1e3 16rFF 'it''s' #name #'two words' #+ $x");
         assert!(!diagnostics.has_errors());
         assert_eq!(
             tokens,
             vec![
                 TokenKind::Integer(42),
-                TokenKind::Float(3.14),
+                TokenKind::Float(2.5),
                 TokenKind::Float(1000.0),
                 TokenKind::Integer(255),
                 TokenKind::String("it's".into()),
